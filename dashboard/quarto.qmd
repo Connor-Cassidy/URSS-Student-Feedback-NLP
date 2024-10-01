@@ -1,0 +1,372 @@
+--- 
+title: "Learner Analytics"
+author: "Connor Cassidy"
+css:
+  css/styles.css
+format: 
+  dashboard:
+    orientation: rows
+    scrolling: true
+server: shiny
+--- 
+
+```{r, r_setup}
+#| context: setup
+
+knitr::knit_engines$set(python = reticulate::eng_python)
+
+library(shiny)
+library(ggplot2)
+library(dplyr)
+library(reticulate)
+library(glue)
+
+n = 10 # max permissable topics
+```
+
+```{python, py_setup}
+#| context: setup
+from shiny import render, reactive, ui, req
+import pandas as pd
+```
+
+
+
+# {.sidebar width=10%}
+    
+**TOPIC**    
+
+```{python, n_topics_hyper}
+ui.input_select("n_topics", "Number of Topics:", choices=[6,8,10,12])
+```
+
+
+# User Guide
+
+## Row
+::: {.callout-note icon=false collapse="false"}
+### Sentiment Analysis using VADER
+
+VADER (Valence Aware Dictionary for sEntiment
+Reasoning) is a rule-based model primarily designed
+to quantify the positivity of social media text, a context
+close to that of student reviews.
+
+
+Key Features:
+
+
+* Lexicon based model assigns sentiment values to
+commonly used words and phrases.
+
+
+* Punctuation and Capitalization is used to differ-
+entiate sentiment intensity between text such as
+ "I love <>" and "I LOVE <>!!".
+ 
+ 
+* Emoticons and Slang VADER is built to capture
+this informal language frequently used by stu-
+dents.
+
+
+* Negations and Intensity Modifers impact the sen-
+timent of following text.
+
+
+Output: 4 scores for each input, the percentage of
+the string deemed to be positive, negative and neu-
+tral, alongside a compound score ranging from -1 to 1 denoting the overall sentiment of the text.
+
+
+To quantify the subjectivity of comments, we use the python package **TextBlob**. This model is conceptually similar to VADER, though it is not optimized for social media text.
+:::
+
+## Row
+
+::: {.callout-note icon=false collapse="false"}
+### Topic Modelling via Latent Dirichlet Allocation
+
+Latent Dirichlet Allocation (LDA) is an unsuper-
+vised, generative model. Under LDA, we assume each
+comment $c$ is generated via the following process:
+
+
+1. Generate the number of words, $N$ $\sim$ Poisson($\xi$).
+
+
+2. Generate the topic distribution, $\theta \sim$ Dirichlet($\alpha$).
+
+
+3. For $i = 1$ to $N$:
+
+    (a) Choose a topic $z_i$ using $\theta$.
+    
+    
+    (b) Generate a word $w_i$ from $\rho(w_i \vert z_i, \beta)$.
+    
+    
+Here, dim($\alpha$) = dim($\theta$) = Number of Topics is a user defined hyper-parameter. 
+
+The goal of LDA is to re-construct the distribution of $\rho(w \vert z_i, \beta)$ used to gen-
+erate the words for each topic. To re-construct this
+random variable, Gibbs Sampling is employed through
+use of the python package tomotopy.
+In addition to providing a framework for LDA, tomo-
+topy provides methods to construct labels for each
+topic by maximising pointwise mutual information
+(PMI). This process involves extracting sections of
+comments labeled as the current topic and maximis-
+ing the PMI of n-gram subsets of these comments.
+This method is a form of Extractive Summarization.
+:::
+
+
+
+::: {.callout-note icon=false collapse="false"}
+### TextRank
+**TextRank** is a graph based ranking algorithm which we use to extract the most important comments. Here, a comment is deemed `important` if the meaning of the comment appears frequently in other comments. The algorithm is as follows:
+
+* Compute a similarity matrix across all comments.
+
+* Construct a graph based on this matrix, whereby each comment is a node and each edge is a similarity score.
+
+* Rank node importance using **PageRank**.
+
+* Return the top $n$ most important comments. 
+
+
+To construct the similarity matrix, we use the cosine similarity between sentence embeddings. These sentence embeddings are 384-dimensional vectors describing the meaning of each comment, computed using **all-MiniLM-L6-v2**.
+:::
+
+::: {.callout-note icon=false collapse="false"}
+### Abstractive Summarization
+
+Abstractive Summarization involves condensing text into a summary, expressing its core ideas in a new way. 
+
+**Transformers** are a class of neural networks used in nlp for tasks like abstractive summarization. Their inclusion of `self-attention` enables entire text sequences to be processed at once. 
+
+**BART** is a transformer model that processes input text bidirectionally, capturing context of each input word from both sides. Its decoder outputs text  auto-regressively, where each output word depends also on the previous output words.
+
+The **T5 Text-to-Text Transformer** has a more versatile framework, whereby each problem is framed as text generation. T5 leverages extensive training data, with its largest size containing 11 billion parameters.
+:::
+
+# Dashboard
+
+
+## Row {height=100% .filll}
+
+### Column{width=40% .fill}
+
+
+```{r choose_topic_buttons}
+#| content: card-toolbar
+
+numericInput(inputId="selected_topic",
+             label="Selected Topic:",
+             value=0, min=0, max=n, 
+             step=1)
+  
+
+
+actionButton(inputId="prev_topic", label="Previous Topic")
+actionButton(inputId="next_topic", label="Next Topic")
+actionButton(inputId="clear_topic", label="Clear Topic")
+
+
+```
+
+```{r render_topic_mds}
+#| context: server
+#| fill: true
+topic_plot = reactive({
+  df = read.csv(glue('cache/topic_{input$n_topics}/coords.csv'))
+  
+  max_x = (abs(df$x) %>% max) * 1.1
+  max_y = (abs(df$y) %>% max) * 1.1
+  df$Topic = factor(df$topics + 1)
+  
+  plot = ggplot(df) + geom_point(aes(x=x,y=y, size=Freq, color=Topic), alpha=0.8) + theme_minimal() + geom_hline(aes(yintercept=0)) + geom_vline(aes(xintercept=0)) + xlim(c(-max_x, max_x)) +  ylim(c(-max_y, max_y)) + theme(legend.position='bottom') + scale_size_continuous(range = c(1, 20), guide='none')
+  return(plot)
+})
+
+
+# read.csv(glue('cache/topic_6/coords.csv')) %>% ggplot() + geom_point(aes(x=x,y=x))
+output$plot = renderPlot({
+  topic_plot()
+  })
+# renderPlotrenderPlot((a_plots()))((plot()))
+```
+
+```{r plot_topic_plot}
+#| fill: true
+plotOutput('plot')
+```
+
+
+```{r Facilitate ADD / REMOVE / CLEAR current topics}
+#| context: server
+
+observeEvent(input$prev_topic, {
+
+  x = input$selected_topic
+  if (x - 1 < 0) {return()}
+  # Decrement the selected topic
+  updateNumericInput(inputId = "selected_topic", 
+                     value = x - 1)
+
+})
+
+observeEvent(input$next_topic, {
+
+  x = input$selected_topic
+  
+  
+  if (x + 1 > n) {return()}
+  # Increment the selected topic.
+  updateNumericInput(inputId = "selected_topic", 
+                     value = x + 1)
+
+})
+
+observeEvent(input$clear_topic, {
+
+  # Set the selected topic to 0 (no topic).
+  updateNumericInput(inputId = "selected_topic", 
+                     value = 0)
+
+})
+
+observeEvent(input$selected_topic, {
+  
+  # If the selected topic is out of range, set it to the lower or upper bound of range
+  x = input$selected_topic
+  n = input$n_topics
+  
+  if (x>n){
+      updateNumericInput(inputId = "selected_topic", 
+                     value = n)
+  }
+  
+  if (x<0){
+    updateNumericInput(inputId = "selected_topic", 
+                     value = 0)
+  }
+  
+})
+```
+
+
+### Column{width=40%}
+
+
+```{r get_file_path}
+#| context: server
+file_path = reactive({
+  if (input$selected_topic != 0) {glue("cache/topic_{input$n_topics}")} else {"cache/total"}
+})
+```
+
+```{r summary}
+#| title: "Summarization"
+#| context: server
+
+output$sentiment = reactive({
+  if (input$selected_topic == 0){
+    inp = read.csv(glue("{file_path()}/sent.csv")) %>% round(2)
+    
+    glue("Positivity: {scales::percent(as.numeric(inp[3,]))}, Neutrality: {scales::percent(as.numeric(inp[2,]))}, Negativity: {scales::percent(as.numeric(inp[1,]))}, Score: {inp[4,]}, Subjectivity: {inp[5,]}")
+    
+  } else {
+    inp = read.csv(glue("{file_path()}/sent.csv"))[input$selected_topic,] %>% round(2)
+    
+    glue("Positivity: {scales::percent(as.numeric(inp[3]))}, Neutrality: {scales::percent(as.numeric(inp[2]))}, Negativity: {scales::percent(as.numeric(inp[1]))}, Score: {inp[4]}, Subjectivity: {inp[5]}")
+    
+  }
+})
+
+output$abs_pos = reactive({
+  if (input$selected_topic == 0){
+    abs = read.csv(glue("{file_path()}/abs.csv"))['pos'] %>% as.character()
+    abs
+  } else {
+    abs = read.csv(glue("{file_path()}/abs.csv"))[input$selected_topic,]['pos'] %>% as.character()
+    abs
+  }
+})
+
+output$abs_neg = reactive({
+  if (input$selected_topic == 0){
+    abs = read.csv(glue("{file_path()}/abs.csv"))['neg'] %>% as.character()
+    abs
+  } else {
+    abs = read.csv(glue("{file_path()}/abs.csv"))[input$selected_topic,]['neg'] %>% as.character()
+    abs
+  }
+})
+
+output$abs_total = reactive({
+  if (input$selected_topic == 0){
+    abs = read.csv(glue("{file_path()}/abs.csv"))['total'] %>% as.character()
+    abs
+  } else {
+    abs = read.csv(glue("{file_path()}/abs.csv"))[input$selected_topic,]['total'] %>% as.character()
+    abs
+  }
+})
+  
+output$ext = reactive({ paste(
+    if (input$selected_topic == 0){
+    ext = read.csv(glue("{file_path()}/ext.csv"))
+    if (nrow(ext) > 5){
+    ext[1:5,]} else{ ext}
+  } else {
+    ext = read.csv(glue("{file_path()}/ext.csv"))[,glue("Topic.{input$selected_topic-1}")]
+    if (length(ext) > 5){
+    (ext[1:5])
+    } else{
+      (ext)
+    }
+}, collapse = " ||| ")
+  })
+
+
+
+
+```
+
+```{r out_summary}
+#|fill: true
+
+includeCSS('css/styles.css')
+
+
+print("**SENTIMENT SCORES**")
+    
+textOutput('sentiment')
+    
+print("**TOTAL ABSTRACTIVE SUMMARY**")
+    
+textOutput('abs_total')
+    
+print("**POSITIVE ABSTRACTIVE SUMMARY**")
+    
+textOutput('abs_pos')
+    
+print("**NEGATIVE ABSTRACTIVE SUMMARY**")
+    
+textOutput('abs_neg')
+    
+print("**MOST IMPORTANT COMMENTS**")
+    
+textOutput('ext')
+
+# print("**TOPIC LABELS**")
+# 
+# tableOutput('labels')
+```
+
+
+
+
+

@@ -1,0 +1,8 @@
+#ext {
+  max-height: 200px; /* Set the max height of the scrollable box */
+  overflow-y: auto;  /* Enable vertical scroll when content exceeds height */
+}
+
+#sentiment, #abs_total, #abs_pos, #abs_neg {
+  overflow: visible; /* Ensure other text outputs are not scrollable */
+}

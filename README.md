@@ -1,0 +1,1 @@
+## This repository contains two components, one an academic poster, and two a series of scripts designed to summarize input free-text comments into a dashboard.
